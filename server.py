@@ -7,6 +7,10 @@ from datetime import datetime
 import subprocess
 import cv2
 
+from picamera2 import Picamera2
+from io import BytesIO
+from PIL import Image
+
 from flask import (
     Flask,
     render_template,
@@ -68,35 +72,34 @@ capture_thread: threading.Thread | None = None
 
 
 def _capture_loop():
-    """Runs in a dedicated thread: grabs frames & encodes JPEG."""
-    LOG.debug("Capture thread: opening camera")
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-    if not cap.isOpened():
-        LOG.error("Camera not available")
-        return
+    from time import sleep
+    LOG.debug("Capture thread: starting picamera2")
+    picam = Picamera2()
+    config = picam.create_preview_configuration(main={"size": (640, 480)})
+    picam.configure(config)
+    picam.start()
 
     try:
         while not stop_capture.is_set():
-            ok, frame = cap.read()
-            if not ok:
-                time.sleep(0.03)
-                continue
+            frame = picam.capture_array()
 
-            # ── software brightness / contrast (0‑100 → alpha/beta) ──
-            alpha = 1 + (CURRENT["contrast"] - 50) / 50  # 0‑100 → 0‑2
-            beta = (CURRENT["brightness"] - 50) * 2  # 0‑100 → −100..+100
-            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+            # применяем настройки
+            alpha = 1 + (CURRENT["contrast"] - 50) / 50
+            beta = (CURRENT["brightness"] - 50) * 2
+            adjusted = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
-            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if ok:
-                global latest_frame
-                latest_frame = buf.tobytes()
-                frame_event.set()
-                frame_event.clear()
+            # кодируем JPEG
+            img = Image.fromarray(adjusted)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            global latest_frame
+            latest_frame = buf.getvalue()
+            frame_event.set()
+            frame_event.clear()
 
-            time.sleep(0.03)  # ≈ 30 fps
+            sleep(1.0 / max(CURRENT.get("fps", 5), 1))
     finally:
-        cap.release()
+        picam.stop()
         LOG.debug("Capture thread: camera released")
 
 
