@@ -4,17 +4,39 @@
     <meta charset="UTF-8" />
     <title>Camera Control</title>
 
-    <!-- Webix CSS & JS -->
-    <link rel="stylesheet" href="https://cdn.webix.com/edge/webix.css" />
-    <script src="https://cdn.webix.com/edge/webix.js"></script>
+    <!-- ✅ корректный мобильный viewport + safe‑area -->
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1,
+                   maximum-scale=1, user-scalable=no, viewport-fit=cover">
 
-    <!-- socket.io -->
-    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <!-- Webix -->
+    <link rel="stylesheet" href="/static/lib/webix/webix.css">
+    <script src="/static/lib/webix/webix.js"></script>
 
-    <style>html,body,#root{height:100%;}</style>
+    <!-- Socket.IO -->
+    <script src="/static/lib/socket.io/socket.io.min.js"></script>
+
+    <!-- мы растягиваем приложение на РЕАЛЬНУЮ высоту вьюпорта -->
+    <style>
+      html,body,#root{                /* root‑контейнер */
+        height: var(--app-height);
+        margin: 0;
+      }
+    </style>
+
+    <!-- скрипт, обновляющий CSS‑переменную --app-height -->
+    <script>
+      function setAppHeight(){
+        document.documentElement
+                .style.setProperty('--app-height', `${window.innerHeight}px`);
+      }
+      window.addEventListener('resize',            setAppHeight);
+      window.addEventListener('orientationchange', setAppHeight);
+      document.addEventListener('DOMContentLoaded', setAppHeight);
+    </script>
 </head>
 <body>
-    <div id="root"></div>
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <div id="root"></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
