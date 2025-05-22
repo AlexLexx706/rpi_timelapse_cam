@@ -30,13 +30,59 @@ webix.ready(() => {
         container: "root",
         rows: [
             {
+                view: "toolbar",
+                css: "topbar",
+                padding: 5,
+                cols: [
+                    {
+                        view: "button",
+                        id: "tlStartBtn",
+                        value: "Start Timelapse",
+                        width: 160,
+                        css: "webix_primary",
+                        state: "stopped",  // custom flag
+                        click() {
+                            const btn = this;
+            
+                            if (btn.config.state === "stopped") {
+                                // Стартуем съёмку
+                                webix.ajax()
+                                    .post("/api/timelapse/start")
+                                    .then(() => {
+                                        btn.define({ value: "Stop Timelapse", type: "danger" });
+                                        btn.config.state = "started";
+                                        btn.refresh();
+                                        webix.message("Timelapse started");
+                                    })
+                                    .catch(() => {
+                                        webix.message({ type: "error", text: "Failed to start timelapse" });
+                                    });
+                            } else {
+                                // Останавливаем съёмку
+                                webix.ajax()
+                                    .post("/api/timelapse/stop")
+                                    .then(() => {
+                                        btn.define({ value: "Start Timelapse", type: "", css: "webix_primary" });
+                                        btn.config.state = "stopped";
+                                        btn.refresh();
+                                        webix.message("Timelapse stopped");
+                                    })
+                                    .catch(() => {
+                                        webix.message({ type: "error", text: "Failed to stop timelapse" });
+                                    });
+                            }
+                        }
+                    }
+                ]
+            },
+            {
                 view: "tabbar",
                 id: "tabs",
                 multiview: true,
                 scroll: true,
                 optionWidth: 120,
                 options: [
-                    { id: "filesTab", value: "📂 Files" },
+                    { id: "filesTab", value: "📂 Images" },
                     { id: "settingsTab", value: "⚙️ Settings" },
                     { id: "streamTab", value: "🎥 Stream" },
                     { id: "videosTab", value: "🎥 Video" }
@@ -178,7 +224,6 @@ function filesTab() {
                             transition:width 0.3s;
                             z-index:1;
                         "></div>
-            
                         <div style="
                             position:absolute;
                             top:0; left:0; right:0; bottom:0;
@@ -255,8 +300,7 @@ function fileToolbar() {
  *  SETTINGS tab
  * ==================================================================== */
 function settingsTab() {
-
-    let original = {};         // will hold last saved values
+    let original = {};
 
     return {
         id: "settingsTab",
@@ -264,50 +308,119 @@ function settingsTab() {
             {
                 view: "form",
                 id: "settingsForm",
-                url: "/api/settings",    // auto-load on init
-
+                url: "/api/settings",
                 on: {
-                    onAfterLoad() {       // remember for Cancel
+                    onAfterLoad() {
                         original = this.getValues();
                     }
                 },
-
-                elements: [
+                rows: [
                     {
-                        view: "richselect", name: "res", label: "Resolution",
-                        options: ["640x480", "1280x720", "1920x1080"]
+                        view: "fieldset",
+                        label: "Camera Settings",
+                        body: {
+                            rows: [
+                                {
+                                    view: "richselect",
+                                    name: "res",
+                                    label: "Resolution",
+                                    labelWidth: 120,
+                                    options: ["640x480", "1280x720", "1920x1080"]
+                                },
+                                {
+                                    view: "slider",
+                                    name: "brightness",
+                                    label: "Brightness",
+                                    labelWidth: 120,
+                                    min: 0,
+                                    max: 100
+                                },
+                                {
+                                    view: "slider",
+                                    name: "contrast",
+                                    label: "Contrast",
+                                    labelWidth: 120,
+                                    min: 0,
+                                    max: 100
+                                },
+                                {
+                                    view: "slider",
+                                    name: "focus",
+                                    label: "Focus",
+                                    labelWidth: 120,
+                                    min: 0,
+                                    max: 100
+                                },
+                                {
+                                    view: "counter",
+                                    name: "exposure",
+                                    label: "Exposure (ms)",
+                                    labelWidth: 120,
+                                    min: -100,
+                                    max: 100,
+                                    step: 1
+                                },
+                                {
+                                    view: "counter",
+                                    name: "fps",
+                                    label: "FPS",
+                                    labelWidth: 120,
+                                    min: 1,
+                                    max: 100,
+                                    step: 1
+                                }
+                            ]
+                        }
                     },
-
                     {
-                        view: "slider", name: "brightness", label: "Brightness",
-                        min: 0, max: 100
+                        view: "fieldset",
+                        label: "Timelapse Settings",
+                        body: {
+                            rows: [
+                                {
+                                    view: "datepicker",
+                                    name: "tl_start",
+                                    type: "time",
+                                    label: "Start time",
+                                    format: "%H:%i:%s",
+                                    stringResult: true,
+                                    labelWidth: 120
+                                },
+                                {
+                                    view: "datepicker",
+                                    name: "tl_stop",
+                                    type: "time",
+                                    label: "Stop time",
+                                    format: "%H:%i:%s",
+                                    stringResult: true,
+                                    labelWidth: 120
+                                },
+                                {
+                                    view: "counter",
+                                    name: "tl_interval_sec",
+                                    label: "Interval (sec)",
+                                    value: 60,
+                                    min: 1,
+                                    max: 3600,
+                                    step: 1,
+                                    labelWidth: 120
+                                },
+                                {
+                                    view: "checkbox",
+                                    name: "tl_mode",
+                                    label: "",
+                                    labelRight: "Continuous mode"
+                                }
+                            ]
+                        }
                     },
-
                     {
-                        view: "slider", name: "contrast", label: "Contrast",
-                        min: 0, max: 100
-                    },
-
-                    {
-                        view: "slider", name: "focus", label: "Focus",
-                        min: 0, max: 100
-                    },
-
-                    {
-                        view: "counter", name: "exposure", label: "Exposure (ms)",
-                        min: -100, max: 100, step: 1
-                    },
-
-                    {
-                        view: "counter", name: "fps", label: "FPS",
-                        min: 1, max: 100, step: 1
-                    },
-
-                    /* buttons inside the form ------------------------- */
-                    {
-                        margin: 10, cols: [
+                        margin: 10,
+                        cols: [
                             {
-                                view: "button", value: "Apply", css: "webix_primary",
+                                view: "button",
+                                value: "Apply",
+                                css: "webix_primary",
                                 click() {
                                     const form = this.getFormView();
                                     const data = form.getValues();
@@ -322,7 +435,9 @@ function settingsTab() {
                                 }
                             },
                             {
-                                view: "button", value: "Cancel", click() {
+                                view: "button",
+                                value: "Cancel",
+                                click() {
                                     this.getFormView().setValues(original);
                                 }
                             }
@@ -333,6 +448,7 @@ function settingsTab() {
         ]
     };
 }
+
 
 /* =======================================================================
  *  STREAM tab
@@ -490,26 +606,30 @@ function humanSize(bytes) {
 /* =======================================================================
  *  Apply settings coming from other clients
  * ==================================================================== */
-function applyRemoteSettings(s) {
+function applyRemoteSettings(settings) {
 
     const form = $$("#settingsForm");
     if (form) {
         const cur = form.getValues();
         form.setValues({
-            res: s.res ?? cur.res,
-            brightness: s.brightness ?? cur.brightness,
-            contrast: s.contrast ?? cur.contrast,
-            focus: s.focus ?? cur.focus,
-            exposure: s.exposure ?? cur.exposure,
-            fps: s.fps ?? cur.fps          // new field
-        }, true);                                         // no events
+            resolution: settings.resolution ?? cur.resolution,
+            brightness: settings.brightness ?? cur.brightness,
+            contrast: settings.contrast ?? cur.contrast,
+            focus: settings.focus ?? cur.focus,
+            exposure: settings.exposure ?? cur.exposure,
+            fps: settings.fps ?? cur.fps,
+            tl_start: settings.tl_start ?? cur.tl_start,
+            tl_stop: settings.tl_stop ?? cur.tl_stop,
+            tl_interval_sec: settings.tl_interval_sec ?? cur.tl_interval_sec,
+            tl_mode: settings.tl_mode ?? cur.tl_mode,
+        }, true);
     }
 
-    if ($$("#brightnessSlider") && s.brightness !== undefined) {
-        $$("#brightnessSlider").setValue(s.brightness, true);
+    if ($$("#brightnessSlider") && settings.brightness !== undefined) {
+        $$("#brightnessSlider").setValue(settings.brightness, true);
     }
-    if ($$("#contrastSlider") && s.contrast !== undefined) {
-        $$("#contrastSlider").setValue(s.contrast, true);
+    if ($$("#contrastSlider") && settings.contrast !== undefined) {
+        $$("#contrastSlider").setValue(settings.contrast, true);
     }
 
     webix.message({

@@ -5,7 +5,13 @@ import time, json, logging, threading
 from pathlib import Path
 from datetime import datetime
 import subprocess
+import io
 import cv2
+import time
+from picamera2.encoders import MJPEGEncoder
+from picamera2.outputs import FileOutput
+from libcamera import Transform
+from threading import Condition
 
 from picamera2 import Picamera2
 from io import BytesIO
@@ -55,62 +61,52 @@ for f in TMP_DIR.iterdir():
 
 # ───────────────────────  GLOBAL STATE  ───────────────────────
 CURRENT = {  # UI‑диапазон: 0‑100
+    "resolution": "1920x1080",
     "brightness": 50,
     "contrast": 50,
     "focus": 0,
     "exposure": -4,
     "fps": 5,
+    "tl_start": "",
+    "tl_stop": "",
+    "tl_interval_sec": 60,
+    "tl_mode": 0
 }
 
-# ───────────────────────  CAMERA SHARED LOOP  ─────────────────
-latest_frame: bytes | None = None  # JPEG buffer
-frame_event = threading.Event()  # set() when new frame ready
-stop_capture = threading.Event()
-STREAMERS = 0  # active /mjpeg clients
-LOCK = threading.Lock()
-capture_thread: threading.Thread | None = None
+picam2 = Picamera2()
 
+FrameDurationLimits = 1000000 // CURRENT['fps']
+# Конфигурация камеры с двумя потоками: lores для MJPEG и main для фотосъёмки
+video_config = picam2.create_video_configuration(
+    main={"size": picam2.sensor_resolution, "format": "RGB888"},
+    lores={"size": list(int(i) for i in CURRENT["resolution"].split('x')), "format": "YUV420"},
+    transform=Transform(hflip=1, vflip=1),
+    display=None,
+    controls={"FrameDurationLimits": (FrameDurationLimits, FrameDurationLimits) }
+)
+picam2.configure(video_config)
 
-def _capture_loop():
-    from time import sleep
-    LOG.debug("Capture thread: starting picamera2")
-    picam = Picamera2()
-    config = picam.create_preview_configuration(main={"size": (640, 480)})
-    picam.configure(config)
-    picam.start()
+encoder = MJPEGEncoder()
+output = FileOutput()
+encoder.output = output
+picam2.start_encoder(encoder, name="lores")
 
-    try:
-        while not stop_capture.is_set():
-            frame = picam.capture_array()
+# Запуск камеры
+picam2.start()
 
-            # применяем настройки
-            alpha = 1 + (CURRENT["contrast"] - 50) / 50
-            beta = (CURRENT["brightness"] - 50) * 2
-            adjusted = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+# Буфер MJPEG-потока
+class StreamingOutput(io.BufferedIOBase):
+    def __init__(self):
+        self.frame = None
+        self.condition = Condition()
 
-            # кодируем JPEG
-            img = Image.fromarray(adjusted)
-            buf = BytesIO()
-            img.save(buf, format="JPEG", quality=80)
-            global latest_frame
-            latest_frame = buf.getvalue()
-            frame_event.set()
-            frame_event.clear()
+    def write(self, buf):
+        with self.condition:
+            self.frame = buf
+            self.condition.notify_all()
 
-            sleep(1.0 / max(CURRENT.get("fps", 5), 1))
-    finally:
-        picam.stop()
-        LOG.debug("Capture thread: camera released")
-
-
-def _ensure_capture_running():
-    """Spin up the capture loop if not alive."""
-    global capture_thread
-    if capture_thread is None or not capture_thread.is_alive():
-        stop_capture.clear()
-        capture_thread = threading.Thread(target=_capture_loop, daemon=True)
-        capture_thread.start()
-
+output_file = StreamingOutput()
+output.fileoutput = output_file
 
 # ───────────────────────  HTTP ROUTES  ────────────────────────
 @app.route("/")
@@ -184,17 +180,6 @@ def api_process():
     files = (request.json or {}).get("files", [])
     socketio.start_background_task(_long_process, files)
     return "", 202
-
-
-# def _long_process(files):
-#     total = max(len(files), 1)
-#     for i, f in enumerate(files, 1):
-#         socketio.sleep(1.0)
-#         p = int(i / total * 100)
-#         socketio.emit("process_progress", {"file": f, "progress": p})
-#         LOG.debug("process %s → %s%%", f, p)
-#     socketio.emit("process_done")
-
 
 def _long_process(files):
     if not files:
@@ -290,13 +275,19 @@ def api_settings():
         return jsonify(CURRENT)
 
     new = request.json or {}
+    LOG.debug("settings:%s", new)
     CURRENT.update(
         {
+            "resolution": new.get("resolution", CURRENT["resolution"]),
             "brightness": int(new.get("brightness", CURRENT["brightness"])),
             "contrast": int(new.get("contrast", CURRENT["contrast"])),
             "focus": int(new.get("focus", CURRENT["focus"])),
             "exposure": int(new.get("exposure", CURRENT["exposure"])),
             "fps": int(new.get("fps", CURRENT["fps"])),
+            "tl_start": new.get("tl_start", CURRENT["tl_start"]),
+            "tl_stop": new.get("tl_stop", CURRENT["tl_stop"]),
+            "tl_interval_sec": int(new.get("tl_interval_sec", CURRENT["tl_interval_sec"])),
+            "tl_mode": int(new.get("tl_mode", CURRENT["tl_mode"])),
         }
     )
     _save_settings_file()
@@ -307,31 +298,15 @@ def api_settings():
 # ───── MJPEG ROUTE (shared frame) ─────────────────────────────
 @app.route("/mjpeg")
 def mjpeg():
-    global STREAMERS
-    with LOCK:
-        STREAMERS += 1
-        _ensure_capture_running()
-        LOG.debug("Streamer +1 → %s", STREAMERS)
-
     def gen():
-        try:
-            while True:
-                if not frame_event.wait(timeout=5):
-                    continue
-                if latest_frame:
-                    yield (
-                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                        + latest_frame
-                        + b"\r\n"
-                    )
-        finally:  # called when client disconnects
-            global STREAMERS
-            with LOCK:
-                STREAMERS -= 1
-                LOG.debug("Streamer −1 → %s", STREAMERS)
-                if STREAMERS == 0:
-                    stop_capture.set()
-
+        while True:
+            with output_file.condition:
+                output_file.condition.wait()
+                yield (
+                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                    + output_file.frame
+                    + b"\r\n"
+                )
     return app.response_class(
         gen(), mimetype="multipart/x-mixed-replace; boundary=frame"
     )
