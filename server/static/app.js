@@ -322,7 +322,7 @@ function settingsTab() {
                             rows: [
                                 {
                                     view: "richselect",
-                                    name: "res",
+                                    name: "resolution",
                                     label: "Resolution",
                                     labelWidth: 120,
                                     options: ["640x480", "1280x720", "1920x1080"]

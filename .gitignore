@@ -3,3 +3,5 @@ demo_files/*
 tmp_thumbs/*
 photos
 tests
+settings.json
+__pycache__

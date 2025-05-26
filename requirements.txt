@@ -1,6 +1,6 @@
 Flask
 Flask-SocketIO
 eventlet 
-opencv-python
+#opencv-python
 Pillow
-picamera2
+#picamera2
